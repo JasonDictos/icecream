@@ -35,6 +35,23 @@
 
 #include "job.h"
 
+// jdictos plurality-preferred-hosts extension.
+// ICECC_PREFERRED_HOSTS/ICECC_PREFERRED_OPTIONS get encoded client-side into
+// one string and sent over the wire as the existing GetCSMsg::preferred_host
+// field (no protocol/PROTOCOL_VERSION bump needed) -- decoded back out by
+// (scheduler-internal) Job::setPreferredHost(). Format:
+//   ICECC_PLIST_V1:host1,host2,...[;OPTS=opt1,opt2,...]
+// Recognized options: "roundrobin" (rotate which host is tried first on each
+// dispatch; default/absence is "fill" -- always try the list in the given
+// order, so earlier hosts fill up before later ones are touched). Either
+// way, once none of the listed hosts have a free slot, the scheduler falls
+// back to running the job on the submitter itself -- unlike the legacy
+// single-host ICECC_PREFERRED_HOST, which just waits. Shared between
+// client/ (which builds the string) and scheduler/ (which parses it), hence
+// living here rather than in either side's own job.h.
+#define ICECC_PLIST_PREFIX "ICECC_PLIST_V1:"
+#define ICECC_PLIST_OPTS_SEP ";OPTS="
+
 // if you increase the PROTOCOL_VERSION, add a macro below and use that
 #define PROTOCOL_VERSION 44
 // if you increase the MIN_PROTOCOL_VERSION, comment out macros below and clean up the code

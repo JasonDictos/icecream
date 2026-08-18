@@ -25,6 +25,23 @@
 
 #include "compileserver.h"
 
+#include <sstream>
+
+namespace {
+std::vector<std::string> split_csv(const std::string &s)
+{
+    std::vector<std::string> out;
+    std::stringstream ss(s);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        if (!item.empty()) {
+            out.push_back(item);
+        }
+    }
+    return out;
+}
+} // namespace
+
 Job::Job(const unsigned int _id, CompileServer *subm)
     : m_id(_id)
     , m_localClientId(0)
@@ -40,6 +57,9 @@ Job::Job(const unsigned int _id, CompileServer *subm)
     , m_argFlags(0)
     , m_language()
     , m_preferredHost()
+    , m_preferredHosts()
+    , m_preferredRoundRobin(false)
+    , m_preferredListMode(false)
     , m_minimalHostVersion(0)
     , m_requiredFeatures(0)
     , m_niceness(0)
@@ -208,6 +228,51 @@ std::string Job::preferredHost() const
 void Job::setPreferredHost(const std::string &host)
 {
     m_preferredHost = host;
+    m_preferredHosts.clear();
+    m_preferredRoundRobin = false;
+    m_preferredListMode = false;
+
+    static const std::string prefix(ICECC_PLIST_PREFIX);
+    if (host.compare(0, prefix.size(), prefix) == 0) {
+        std::string rest = host.substr(prefix.size());
+        std::string hosts_part = rest;
+        std::string opts_part;
+        static const std::string opts_sep(ICECC_PLIST_OPTS_SEP);
+        size_t opts_at = rest.find(opts_sep);
+        if (opts_at != std::string::npos) {
+            hosts_part = rest.substr(0, opts_at);
+            opts_part = rest.substr(opts_at + opts_sep.size());
+        }
+        m_preferredHosts = split_csv(hosts_part);
+        for (const std::string &opt : split_csv(opts_part)) {
+            if (opt == "roundrobin") {
+                m_preferredRoundRobin = true;
+            }
+            // "fill" is the default/absence of roundrobin -- no flag needed,
+            // but accepted (and ignored) here so it's not treated as a typo.
+        }
+        m_preferredListMode = true;
+    } else if (!host.empty()) {
+        // Legacy single-host behavior: exactly one entry, list mode off (so
+        // the scheduler's local-fallback-when-exhausted stays disabled, same
+        // as it always has been for plain ICECC_PREFERRED_HOST).
+        m_preferredHosts.push_back(host);
+    }
+}
+
+std::vector<std::string> Job::preferredHosts() const
+{
+    return m_preferredHosts;
+}
+
+bool Job::preferredRoundRobin() const
+{
+    return m_preferredRoundRobin;
+}
+
+bool Job::preferredListMode() const
+{
+    return m_preferredListMode;
 }
 
 int Job::minimalHostVersion() const

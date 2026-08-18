@@ -26,6 +26,7 @@
 
 #include <list>
 #include <string>
+#include <vector>
 #include <time.h>
 
 #include "../services/comm.h"
@@ -90,6 +91,20 @@ public:
     std::string preferredHost() const;
     void setPreferredHost(const std::string &host);
 
+    // jdictos plurality-preferred-hosts extension.
+    // setPreferredHost() transparently recognizes an encoded multi-host
+    // request (see comm.h ENCODE_PREFERRED_HOSTS_PREFIX) and populates these;
+    // for a plain single hostname (or empty), preferredHosts() mirrors the
+    // legacy single-value behavior exactly (0 or 1 entries, list mode off).
+    std::vector<std::string> preferredHosts() const;
+    bool preferredRoundRobin() const;
+    // True only when this job's preferred host(s) came from the new
+    // ICECC_PREFERRED_HOSTS encoding -- gates the scheduler's "fall back to
+    // local submitter once every preferred host is full" behavior, so the
+    // original single ICECC_PREFERRED_HOST semantics (wait, never fall back
+    // to local) are completely unchanged.
+    bool preferredListMode() const;
+
     int minimalHostVersion() const;
     void setMinimalHostVersion( int version );
 
@@ -122,6 +137,9 @@ private:
     unsigned int m_argFlags;
     std::string m_language; // for debugging
     std::string m_preferredHost; // for debugging daemons
+    std::vector<std::string> m_preferredHosts; // jdictos: parsed-out list
+    bool m_preferredRoundRobin; // jdictos: rotate vs. fill-in-order among m_preferredHosts
+    bool m_preferredListMode; // jdictos: came from ICECC_PREFERRED_HOSTS, not legacy ICECC_PREFERRED_HOST
     int m_minimalHostVersion; // minimal version required for the the remote server
     unsigned int m_requiredFeatures; // flags the job requires on the remote server
     int m_niceness; // nice priority (0-20)
