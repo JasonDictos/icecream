@@ -98,6 +98,8 @@ public:
     // legacy single-value behavior exactly (0 or 1 entries, list mode off).
     std::vector<std::string> preferredHosts() const;
     bool preferredRoundRobin() const;
+    size_t preferredRRCount() const; // 0 = rotate the whole list
+    size_t preferredFillCount() const; // leading hosts tried in order before rotating
     // True only when this job's preferred host(s) came from the new
     // ICECC_PREFERRED_HOSTS encoding -- gates the scheduler's "fall back to
     // local submitter once every preferred host is full" behavior, so the
@@ -139,6 +141,8 @@ private:
     std::string m_preferredHost; // for debugging daemons
     std::vector<std::string> m_preferredHosts; // jdictos: parsed-out list
     bool m_preferredRoundRobin; // jdictos: rotate vs. fill-in-order among m_preferredHosts
+    size_t m_preferredRRCount;
+    size_t m_preferredFillCount;
     bool m_preferredListMode; // jdictos: came from ICECC_PREFERRED_HOSTS, not legacy ICECC_PREFERRED_HOST
     int m_minimalHostVersion; // minimal version required for the the remote server
     unsigned int m_requiredFeatures; // flags the job requires on the remote server

@@ -26,6 +26,7 @@
 #include "compileserver.h"
 
 #include <sstream>
+#include <cstdlib>
 
 namespace {
 std::vector<std::string> split_csv(const std::string &s)
@@ -59,6 +60,8 @@ Job::Job(const unsigned int _id, CompileServer *subm)
     , m_preferredHost()
     , m_preferredHosts()
     , m_preferredRoundRobin(false)
+    , m_preferredRRCount(0)
+    , m_preferredFillCount(0)
     , m_preferredListMode(false)
     , m_minimalHostVersion(0)
     , m_requiredFeatures(0)
@@ -230,6 +233,8 @@ void Job::setPreferredHost(const std::string &host)
     m_preferredHost = host;
     m_preferredHosts.clear();
     m_preferredRoundRobin = false;
+    m_preferredRRCount = 0;
+    m_preferredFillCount = 0;
     m_preferredListMode = false;
 
     static const std::string prefix(ICECC_PLIST_PREFIX);
@@ -246,6 +251,14 @@ void Job::setPreferredHost(const std::string &host)
         m_preferredHosts = split_csv(hosts_part);
         for (const std::string &opt : split_csv(opts_part)) {
             if (opt == "roundrobin") {
+                m_preferredRoundRobin = true;
+            } else if (opt.compare(0, 11, "roundrobin=") == 0) {
+                // roundrobin=N: rotate among the first N hosts, fill the rest in order.
+                m_preferredRoundRobin = true;
+                m_preferredRRCount = strtoul(opt.c_str() + 11, nullptr, 10);
+            } else if (opt.compare(0, 5, "fill=") == 0) {
+                // fill=N: the first N hosts go in order, then the rest rotate.
+                m_preferredFillCount = strtoul(opt.c_str() + 5, nullptr, 10);
                 m_preferredRoundRobin = true;
             }
             // "fill" is the default/absence of roundrobin -- no flag needed,
@@ -268,6 +281,16 @@ std::vector<std::string> Job::preferredHosts() const
 bool Job::preferredRoundRobin() const
 {
     return m_preferredRoundRobin;
+}
+
+size_t Job::preferredFillCount() const
+{
+    return m_preferredFillCount;
+}
+
+size_t Job::preferredRRCount() const
+{
+    return m_preferredRRCount;
 }
 
 bool Job::preferredListMode() const

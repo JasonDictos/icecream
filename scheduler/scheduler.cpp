@@ -912,7 +912,18 @@ static CompileServer *pick_server(Job *job, SchedulerAlgorithmName schedulerAlgo
     if (!job->preferredHosts().empty()) {
         const std::vector<std::string> &hosts = job->preferredHosts();
 
-        if (job->preferredRoundRobin() && hosts.size() > 1) {
+        // fill=N: the first N hosts are tried in order before any rotation.
+        size_t base = std::min(job->preferredFillCount(), hosts.size());
+        for (size_t i = 0; i < base; ++i) {
+            for (CompileServer* const cs : css) {
+                if (cs->matches(hosts[i]) && cs->is_eligible_now(job))
+                    return cs;
+            }
+        }
+        size_t rr_n = job->preferredRRCount();
+        if (rr_n == 0 || rr_n > hosts.size() - base)
+            rr_n = hosts.size() - base;
+        if (job->preferredRoundRobin() && rr_n > 1) {
             // Rotation state persists across calls, keyed by the exact list
             // (so distinct clients with distinct lists rotate independently).
             static map<string, size_t> rr_next;
@@ -923,16 +934,23 @@ static CompileServer *pick_server(Job *job, SchedulerAlgorithmName schedulerAlgo
             }
             size_t &start = rr_next[key];
 
-            for (size_t n = 0; n < hosts.size(); ++n) {
-                size_t i = (start + n) % hosts.size();
+            for (size_t n = 0; n < rr_n; ++n) {
+                size_t i = base + (start + n) % rr_n;
                 for (CompileServer* const cs : css) {
                     if (cs->matches(hosts[i]) && cs->is_eligible_now(job)) {
 #if DEBUG_SCHEDULER > 1
                         trace() << "taking preferred (roundrobin) " << cs->nodeName() << " " << server_speed(cs, job, true) << endl;
 #endif
-                        start = (i + 1) % hosts.size();
+                        start = (i - base + 1) % rr_n;
                         return cs;
                     }
+                }
+            }
+            // Rotated group is full: spill to the rest of the list in order.
+            for (size_t i = base + rr_n; i < hosts.size(); ++i) {
+                for (CompileServer* const cs : css) {
+                    if (cs->matches(hosts[i]) && cs->is_eligible_now(job))
+                        return cs;
                 }
             }
         } else {
@@ -1553,6 +1571,7 @@ static bool handle_stats(CompileServer *cs, Msg *_m)
     for (CompileServer * const c : css)
         if (c == cs) {
             c->setLoad(m->load);
+            c->setFreeMem(m->freeMem);
             c->setClientCount(m->client_count);
             handle_monitor_stats(c, m);
             return true;
