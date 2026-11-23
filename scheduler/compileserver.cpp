@@ -46,6 +46,11 @@ CompileServer::CompileServer(const int fd, struct sockaddr *_addr, const socklen
     , m_busyInstalling(0)
     , m_hostPlatform()
     , m_load(1000)
+    // jdictos: permissive until the first real StatsMsg arrives -- default
+    // to "assume fine" (a large MB figure no real host exceeds) rather than
+    // 0, so a freshly-(re)connected host isn't excluded from its first
+    // dispatch before it's had a chance to report.
+    , m_freeMem(1000000)
     , m_maxJobs(0)
     , m_noRemote(false)
     , m_jobList()
@@ -201,14 +206,27 @@ bool CompileServer::is_eligible_now(const Job *job) const
     // busy with local jobs (that may possibly take long)
     if( m_maxJobs > 0 && jobs_now < m_maxJobs + maxPreloadCount() && local_jobs_now < m_maxJobs)
         jobs_okay = true;
-    bool load_okay = m_load < 1000;
+    // jdictos: dropped the load gate. It reflects a load *report* from the
+    // daemon that's observed getting stuck stale (host reports idle in
+    // reality but m_load never decays back down without a daemon restart),
+    // which silently and permanently excludes an otherwise-free host. We
+    // want jobs pushed onto known hosts by job-count capacity alone --
+    // never held back by a load number that may not even be current.
+    //
+    // jdictos: added a real safety gate in its place -- at least 2GB of free
+    // physical RAM, from the daemon's own StatsMsg reports (m_freeMem is in
+    // MB). This is what actually caused a build failure (EXIT_OUT_OF_MEMORY)
+    // once jobs started landing on hosts unconditionally: TSAN-sanitized
+    // unity compiles are memory-hungry enough that job-count capacity alone
+    // isn't a sufficient admission check.
+    bool mem_okay = m_freeMem >= 2048;
     bool eligible = jobs_okay
-                    && load_okay
+                    && mem_okay
                     && can_install(job, false).size();
 #if DEBUG_SCHEDULER > 2
     trace() << nodeName() << " is_eligible_now: " << eligible << " (remote jobs " << m_jobList.size()
         << ", local jobs " << (currentJobCount() - m_jobList.size()) << ", jobs_okay " << jobs_okay
-        << ", load_okay " << load_okay << ")" << endl;
+        << ", mem_okay " << mem_okay << " (" << m_freeMem << "MB free))" << endl;
 #endif
     return eligible;
 }
@@ -276,6 +294,16 @@ unsigned int CompileServer::load() const
 void CompileServer::setLoad(unsigned int load)
 {
     m_load = load;
+}
+
+unsigned int CompileServer::freeMem() const
+{
+    return m_freeMem;
+}
+
+void CompileServer::setFreeMem(unsigned int freeMem)
+{
+    m_freeMem = freeMem;
 }
 
 int CompileServer::maxJobs() const

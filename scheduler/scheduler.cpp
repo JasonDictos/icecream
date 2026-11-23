@@ -904,17 +904,75 @@ static CompileServer *pick_server(Job *job, SchedulerAlgorithmName schedulerAlgo
     trace() << "pick_server " << job->id() << " " << job->targetPlatform() << endl;
 #endif
 
-    /* if the user wants to test/prefer one specific daemon, we return it if available */
-    if (!job->preferredHost().empty()) {
-        for (CompileServer* const cs : css) {
-            if (cs->matches(job->preferredHost()) && cs->is_eligible_now(job)) {
+    /* if the user wants to test/prefer one or more specific daemons, we
+       return one of them if available (jdictos plurality-preferred-hosts
+       extension: a job may carry a whole ordered list instead of a single
+       host, selected either in fixed order ("fill", the default) or rotated
+       ("roundrobin"); see job.h for the encoding). */
+    if (!job->preferredHosts().empty()) {
+        const std::vector<std::string> &hosts = job->preferredHosts();
+
+        // fill=N: the first N hosts are tried in order before any rotation.
+        size_t base = std::min(job->preferredFillCount(), hosts.size());
+        for (size_t i = 0; i < base; ++i) {
+            for (CompileServer* const cs : css) {
+                if (cs->matches(hosts[i]) && cs->is_eligible_now(job))
+                    return cs;
+            }
+        }
+        size_t rr_n = job->preferredRRCount();
+        if (rr_n == 0 || rr_n > hosts.size() - base)
+            rr_n = hosts.size() - base;
+        if (job->preferredRoundRobin() && rr_n > 1) {
+            // Rotation state persists across calls, keyed by the exact list
+            // (so distinct clients with distinct lists rotate independently).
+            static map<string, size_t> rr_next;
+            string key;
+            for (const std::string &h : hosts) {
+                key += h;
+                key += ',';
+            }
+            size_t &start = rr_next[key];
+
+            for (size_t n = 0; n < rr_n; ++n) {
+                size_t i = base + (start + n) % rr_n;
+                for (CompileServer* const cs : css) {
+                    if (cs->matches(hosts[i]) && cs->is_eligible_now(job)) {
 #if DEBUG_SCHEDULER > 1
-                trace() << "taking preferred " << cs->nodeName() << " " <<  server_speed(cs, job, true) << endl;
+                        trace() << "taking preferred (roundrobin) " << cs->nodeName() << " " << server_speed(cs, job, true) << endl;
 #endif
-                return cs;
+                        start = (i - base + 1) % rr_n;
+                        return cs;
+                    }
+                }
+            }
+            // Rotated group is full: spill to the rest of the list in order.
+            for (size_t i = base + rr_n; i < hosts.size(); ++i) {
+                for (CompileServer* const cs : css) {
+                    if (cs->matches(hosts[i]) && cs->is_eligible_now(job))
+                        return cs;
+                }
+            }
+        } else {
+            // "fill": try in the given order every time, so the first host
+            // in the list absorbs jobs until it's full before the next one
+            // is touched at all.
+            for (const std::string &h : hosts) {
+                for (CompileServer* const cs : css) {
+                    if (cs->matches(h) && cs->is_eligible_now(job)) {
+#if DEBUG_SCHEDULER > 1
+                        trace() << "taking preferred (fill) " << cs->nodeName() << " " << server_speed(cs, job, true) << endl;
+#endif
+                        return cs;
+                    }
+                }
             }
         }
 
+        // None of the preferred host(s) have room right now. For the legacy
+        // single-host case the caller (empty_queue()) checks
+        // preferredListMode() and will NOT fall back to the submitter --
+        // same "wait for it" behavior as always. In list mode it will.
         return nullptr;
     }
 
@@ -1076,10 +1134,14 @@ static bool empty_queue(SchedulerAlgorithmName schedulerAlgorithm)
         }
 
         /* Ignore the load on the submitter itself if no other host could
-           be found.  We only obey to its max job number.  */
+           be found.  We only obey to its max job number.
+           jdictos: legacy single-host ICECC_PREFERRED_HOST still never
+           falls back here (preferredListMode() false) -- it just waits, as
+           always. The new ICECC_PREFERRED_HOSTS list falls back to local
+           once every listed host is full, which is the whole point of it. */
         use_cs = job->submitter();
         if ((use_cs->currentJobCount() < use_cs->maxJobs())
-                && job->preferredHost().empty()
+                && (job->preferredHosts().empty() || job->preferredListMode())
                 /* This should be trivially true.  */
                 && use_cs->can_install(job).size()) {
             break;
@@ -1091,8 +1153,13 @@ static bool empty_queue(SchedulerAlgorithmName schedulerAlgorithm)
             assert( jobPosition.isValid());
             job = jobPosition.job;
             for (CompileServer * const cs : css) {
-                if(!job->preferredHost().empty() && !cs->matches(job->preferredHost()))
-                    continue;
+                if (!job->preferredHosts().empty() && !job->preferredListMode()) {
+                    bool matches_any = false;
+                    for (const std::string &h : job->preferredHosts()) {
+                        if (cs->matches(h)) { matches_any = true; break; }
+                    }
+                    if (!matches_any) continue;
+                }
                 if(cs->is_eligible_ever(job)) {
                     trace() << "No suitable host found, delaying" << endl;
                     return false;
@@ -1504,6 +1571,7 @@ static bool handle_stats(CompileServer *cs, Msg *_m)
     for (CompileServer * const c : css)
         if (c == cs) {
             c->setLoad(m->load);
+            c->setFreeMem(m->freeMem);
             c->setClientCount(m->client_count);
             handle_monitor_stats(c, m);
             return true;

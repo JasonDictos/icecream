@@ -846,6 +846,20 @@ int build_remote(CompileJob &job, MsgChannel *local_daemon, const Environments &
     }
 
     const char *preferred_host = getenv("ICECC_PREFERRED_HOST");
+    // jdictos plurality-preferred-hosts extension: ICECC_PREFERRED_HOSTS
+    // (comma-separated) takes priority over the legacy single-host
+    // ICECC_PREFERRED_HOST if both happen to be set. Encoded into the
+    // wire's existing preferred_host string field -- see job.h.
+    string encoded_preferred_hosts;
+    const char *preferred_hosts_env = getenv("ICECC_PREFERRED_HOSTS");
+    if (preferred_hosts_env && *preferred_hosts_env) {
+        encoded_preferred_hosts = string(ICECC_PLIST_PREFIX) + preferred_hosts_env;
+        const char *preferred_opts_env = getenv("ICECC_PREFERRED_OPTIONS");
+        if (preferred_opts_env && *preferred_opts_env) {
+            encoded_preferred_hosts += string(ICECC_PLIST_OPTS_SEP) + preferred_opts_env;
+        }
+        preferred_host = encoded_preferred_hosts.c_str();
+    }
 
     if (torepeat == 1) {
         string fake_filename;

@@ -81,6 +81,10 @@ public:
     unsigned int load() const;
     void setLoad(const unsigned int load);
 
+    // jdictos: free physical RAM in MB.
+    unsigned int freeMem() const;
+    void setFreeMem(const unsigned int freeMem);
+
     int maxJobs() const;
     void setMaxJobs(const int jobs);
     int maxPreloadCount() const;
@@ -164,6 +168,8 @@ private:
 
     // LOAD is load * 1000
     unsigned int m_load;
+    // jdictos: free physical RAM in MB, as last reported via StatsMsg.
+    unsigned int m_freeMem;
     int m_maxJobs;
     bool m_noRemote;
     list<Job *> m_jobList;
